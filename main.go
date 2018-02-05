@@ -36,6 +36,7 @@ import (
 	"syscall"
 	"io/ioutil"
 	"path"
+	"net/http"
 )
 
 var (
@@ -84,7 +85,8 @@ func main() {
 			// process delay timer has tripped, process the config files.
 			if lastConfigProcess.Before(lastConfigChange) {
 				// process
-				processConfigChanges(*watchedPath,*targetPath)
+				processConfigChanges(*watchedPath, *targetPath)
+				notifyPrometheus(*prometheusUrl)
 				lastConfigProcess = time.Now()
 			}
 
@@ -94,45 +96,56 @@ func main() {
 
 }
 
-func processConfigChanges(srcPath string,dstPath string) {
-	log.Debugf("Processing changes for %v",srcPath)
+func notifyPrometheus(url string) {
+	log.Debug("Posting reload command to Prometheus")
+	resp, err := http.Post(url, "plain/text", nil)
+	if err != nil {
+		log.Errorf("Error posting reload command to Prometheues: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	log.Debugf("Status code %v", resp.StatusCode)
+}
+
+func processConfigChanges(srcPath string, dstPath string) {
+	log.Debugf("Processing changes for %v", srcPath)
 	// if we are in a folder, process the files within
 	stat, err := os.Stat(srcPath)
-	if err != nil{
-		log.Errorf("Error processing changes in %v: %v", srcPath,err)
+	if err != nil {
+		log.Errorf("Error processing changes in %v: %v", srcPath, err)
 		return
 	}
 
-	if stat.IsDir(){
+	if stat.IsDir() {
 		files, err := ioutil.ReadDir(srcPath)
-		if err != nil{
-			log.Errorf("Failed to list files in %v: %v", srcPath,err)
+		if err != nil {
+			log.Errorf("Failed to list files in %v: %v", srcPath, err)
 			return
 		}
 
-		for _,fileName := range files {
-			processConfigChanges(path.Join(srcPath,fileName.Name()),dstPath)
+		for _, fileName := range files {
+			processConfigChanges(path.Join(srcPath, fileName.Name()), dstPath)
 		}
-	}else{
-		processFile(srcPath,dstPath)
+	} else {
+		processFile(srcPath, dstPath)
 	}
 }
 
-func processFile(filePath string,destFolder string) {
+func processFile(filePath string, destFolder string) {
 
 	// read in the file
-	contents,err := ioutil.ReadFile(filePath)
-	if err !=nil {
-		log.Errorf("Error reading %v: %v",filePath,err)
+	contents, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		log.Errorf("Error reading %v: %v", filePath, err)
 	}
 	// expand any environmenal vars present
 	updatedContent := os.ExpandEnv(string(contents))
 
 	// write updated content to the destination folder
-	_,fileName := path.Split(filePath)
-	targetFile := path.Join(destFolder,fileName)
-	log.Debugf("writing updated content to %v",targetFile)
-	ioutil.WriteFile(targetFile,[]byte(updatedContent),0644)
+	_, fileName := path.Split(filePath)
+	targetFile := path.Join(destFolder, fileName)
+	log.Debugf("writing updated content to %v", targetFile)
+	ioutil.WriteFile(targetFile, []byte(updatedContent), 0644)
 }
 
 func startWatchingPath(path string) (chan time.Time, error) {
