@@ -42,7 +42,6 @@ import (
 var (
 	watchedPath      = flag.String("watch-path", "/config", "Path to be watched (default /config)")
 	expandVars       = flag.Bool("expand-vars", true, "Expand $env variables found in files (default true).")
-	copyFiles        = flag.Bool("copy-files", true, "Copy config files to destination (default true)")
 	targetPath       = flag.String("target-path", "/processed-config", "Path to copy processed files to (default /processed-config)")
 	prometheusUrl    = flag.String("prometheus-url", "http://localhost:9090/-/reload", "Url to send a POST to prometheus for it to reload its config. (default http://localhost:9090/-/reload)")
 	processDelayTime = flag.Duration("process-delay-time", 5*time.Second, "time to wait after a detected change to process files. This allows capturing multiple close timed changes in a single update.")
@@ -54,6 +53,9 @@ func main() {
 	log.Info("Prometheus Configuration Watcher")
 	log.Info("Github: https://github.com/khaines/prom-config-watcher")
 	flag.Parse()
+	if *debugLogs {
+		log.SetLevel(log.DebugLevel)
+	}
 
 	sigs := make(chan os.Signal, 1)
 
@@ -85,7 +87,7 @@ func main() {
 			// process delay timer has tripped, process the config files.
 			if lastConfigProcess.Before(lastConfigChange) {
 				// process
-				processConfigChanges(*watchedPath, *targetPath)
+				processConfigChanges(*watchedPath, *targetPath, *expandVars)
 				notifyPrometheus(*prometheusUrl)
 				lastConfigProcess = time.Now()
 			}
@@ -107,7 +109,7 @@ func notifyPrometheus(url string) {
 	log.Debugf("Status code %v", resp.StatusCode)
 }
 
-func processConfigChanges(srcPath string, dstPath string) {
+func processConfigChanges(srcPath string, dstPath string, expandVars bool) {
 	log.Debugf("Processing changes for %v", srcPath)
 	// if we are in a folder, process the files within
 	stat, err := os.Stat(srcPath)
@@ -124,22 +126,27 @@ func processConfigChanges(srcPath string, dstPath string) {
 		}
 
 		for _, fileName := range files {
-			processConfigChanges(path.Join(srcPath, fileName.Name()), dstPath)
+			processConfigChanges(path.Join(srcPath, fileName.Name()), dstPath, expandVars)
 		}
 	} else {
-		processFile(srcPath, dstPath)
+		processFile(srcPath, dstPath,expandVars)
 	}
 }
 
-func processFile(filePath string, destFolder string) {
+func processFile(filePath string, destFolder string, expandVars bool) {
 
 	// read in the file
 	contents, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		log.Errorf("Error reading %v: %v", filePath, err)
 	}
-	// expand any environmenal vars present
-	updatedContent := os.ExpandEnv(string(contents))
+	 updatedContent:=""
+	if expandVars {
+		// expand any environmenal vars present
+		updatedContent = os.ExpandEnv(string(contents))
+	}else{
+		updatedContent = string(contents)
+	}
 
 	// write updated content to the destination folder
 	_, fileName := path.Split(filePath)
